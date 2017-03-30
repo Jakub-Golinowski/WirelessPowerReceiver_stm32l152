@@ -36,12 +36,11 @@
 
 /* USER CODE BEGIN Includes */
 #include "P9025AC_I2C.h"
-#include "UART_Commands.h"
+#include "JG_BinaryProtocolCommands.h"
 
 
 #define RXBUFFERSIZE 1
-#define COMMAND_BUFFER_SIZE 32 // Command buffer, should be a power of 2 (f.e. 2^5 = 32)
-#define COMMAND_BUFFER_MASK (COMMAND_BUFFER_SIZE-1) //USART receiving buffer mask, to control buffer head and tail indexes
+
 
 /* USER CODE END Includes */
 
@@ -56,16 +55,6 @@ DMA_HandleTypeDef hdma_usart2_tx;
 
 /* USER CODE BEGIN PV */
 /* Private variables ---------------------------------------------------------*/
-__IO FlagStatus CommandReceived_GF = RESET;
-__IO FlagStatus CommandBufferFull_GF = RESET;
-
-/* Buffer used for transmission */
-uint8_t aTxBuffer_GV[] = "--------------=== However long the longest I2C message will be. ===--------------";
-
-__IO uint8_t command_buffer_tail_index_GV;
-__IO uint8_t command_buffer_head_index_GV;
-__IO uint8_t command_buffer_GV[COMMAND_BUFFER_SIZE];
-
 
 /* Buffer used for reception */
 uint8_t rx_buffer_GV[RXBUFFERSIZE];
@@ -90,14 +79,14 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *UartHandle)
 	uint8_t tmp_head;
 	tmp_head = (command_buffer_head_index_GV+1) & COMMAND_BUFFER_MASK;
 	if(tmp_head == command_buffer_tail_index_GV )		// If the circular buffer is full (head caught up to tail),
-		CommandBufferFull_GF = SET;						// set the flag and stop writing new data to buffer
+		g_CommandBufferFullFlag = SET;						// set the flag and stop writing new data to buffer
 	else
 	{
 		command_buffer_head_index_GV = tmp_head;
 		command_buffer_GV[command_buffer_head_index_GV] = rx_buffer_GV[0];
 	}
 
-	CommandReceived_GF = SET;
+	g_CommandReceivedCounter = SET;
 }
 
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
@@ -109,44 +98,6 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 	 }
 
 }
-
-void HAL_I2C_MemRxCpltCallback(I2C_HandleTypeDef *hi2c)
-{
-
-}
-
-
-int8_t JG_CommandBuffer_GetCommand(uint8_t * receivedData) {
-	if(command_buffer_head_index_GV == command_buffer_tail_index_GV)
-		return -1; //Return error code when the buffer is empty
-
-	command_buffer_tail_index_GV = (command_buffer_tail_index_GV+1) & COMMAND_BUFFER_MASK; //Increment tail index and & with mask, so it never exceeds the buffer size - 1
-
-	*receivedData = command_buffer_GV[command_buffer_tail_index_GV];		//Insert byte from Data Register to circular buffer
-
-	return 1;
-}
-
-
-
-void JG_ProcessCurrentCommand(uint8_t Command)
-{
-	switch(Command)
-	{
-		case JG_Command_IdentificationCommandCode :
-			HAL_UART_Transmit_DMA(&huart2,(uint8_t*)JG_Command_IdenticationCommandRespone,JG_Command_IdentificationCommandResponseLength);
-			break;
-
-		case JG_Command_VoltageRectifiedCommandCode:
-		{
-			uint8_t size = sprintf(aTxBuffer_GV, "%s %3.2f V\r\n", JG_Command_VoltageRectifiedCommandResponeBeginning, g_P9025AC_Vrect_Volts);
-			HAL_UART_Transmit_DMA(&huart2,aTxBuffer_GV,size);
-			break;
-		}
-		default : HAL_UART_Transmit_DMA(&huart2,(uint8_t*)JG_Command_UnknownCommandRespone,JG_Command_UnknownCommandResponseLength);
-	}
-}
-
 /* USER CODE END PFP */
 
 /* USER CODE BEGIN 0 */
@@ -178,35 +129,38 @@ int main(void)
   MX_TIM7_Init();
 
   /* USER CODE BEGIN 2 */
+
+  //Inicjalizacja Timera TIM7
   HAL_TIM_Base_Start_IT(&htim7);
-  //Inicjalizacja odbierania komend po UART o d³ugoœci RXBUFFERSIZE
-  if(HAL_UART_Receive_IT(&huart2, (uint8_t *)rx_buffer_GV, RXBUFFERSIZE) != HAL_OK)
-	  Error_Handler();
+  //Inicjalizacja odbierania komend po UART
+  HAL_UART_Receive_IT(&huart2, (uint8_t *)rx_buffer_GV, RXBUFFERSIZE);
 
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
+
   uint8_t CurrentCommand = 0;
+
   while (1)
   {
   /* USER CODE END WHILE */
 
   /* USER CODE BEGIN 3 */
-	  if(CommandReceived_GF == SET)
-	  {
-		  JG_CommandBuffer_GetCommand(&CurrentCommand);
-		  CommandReceived_GF = RESET;
-		  HAL_UART_Receive_IT(&huart2, (uint8_t *)rx_buffer_GV, RXBUFFERSIZE);
-		  JG_ProcessCurrentCommand(CurrentCommand);
-	  }
+  if(g_CommandReceivedCounter == SET)
+  {
+	  JG_CommandBuffer_GetCommand(&CurrentCommand);
+	  g_CommandReceivedCounter = RESET;
+	  HAL_UART_Receive_IT(&huart2, (uint8_t *)rx_buffer_GV, RXBUFFERSIZE);
+	  JG_ProcessCurrentCommand(CurrentCommand);
+  }
 
-	  if(g_MeasurementsFlag == SET)
-	  {
-		  JG_I2C_ReadMeasurementsFromP9025ACMem_Blocking();
-		  JG_I2C_PutMeasurementsValuesToGlobalVariablesFromRaw();
-		  g_MeasurementsFlag = RESET;
-	  }
+  if(g_MeasurementsFlag == SET)
+  {
+	  JG_I2C_ReadMeasurementsFromP9025ACMem_Blocking();
+	  JG_I2C_PutMeasurementsValuesToGlobalVariablesFromRaw();
+	  g_MeasurementsFlag = RESET;
+  }
 
   }
   /* USER CODE END 3 */
