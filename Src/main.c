@@ -55,10 +55,11 @@ DMA_HandleTypeDef hdma_usart2_tx;
 
 /* USER CODE BEGIN PV */
 /* Private variables ---------------------------------------------------------*/
-
 /* Buffer used for reception */
 uint8_t rx_buffer_GV[RXBUFFERSIZE];
-
+uint8_t g_RepeatModeTimerTimedOutFlag;
+uint8_t g_RepeatModeTimerTimeout_seconds = 2;
+uint8_t g_RepeatModeTimer_seconds = 0;
 
 /* USER CODE END PV */
 
@@ -93,8 +94,17 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 {
 	 if(htim->Instance == TIM7)
 	 {
+		 ++g_RepeatModeTimer_seconds;
+
 		 HAL_GPIO_TogglePin(GPIOA, GPIO_PIN_5);
 		 g_MeasurementsFlag = SET;
+
+		 if (g_RepeatModeTimer_seconds == g_RepeatModeTimerTimeout_seconds)
+		 {
+			 g_RepeatModeTimerTimedOutFlag = SET;
+			 g_RepeatModeTimer_seconds = 0;
+		 }
+
 	 }
 
 }
@@ -147,20 +157,60 @@ int main(void)
   /* USER CODE END WHILE */
 
   /* USER CODE BEGIN 3 */
-  if(g_CommandReceivedCounter == SET)
-  {
-	  JG_CommandBuffer_GetCommand(&CurrentCommand);
-	  g_CommandReceivedCounter = RESET;
-	  HAL_UART_Receive_IT(&huart2, (uint8_t *)rx_buffer_GV, RXBUFFERSIZE);
-	  JG_ProcessCurrentCommand(CurrentCommand);
-  }
+		if(g_CommandReceivedCounter == SET)
+		{
+		  JG_CommandBuffer_GetCommand(&CurrentCommand);
+		  g_CommandReceivedCounter = RESET;
+		  HAL_UART_Receive_IT(&huart2, (uint8_t *)rx_buffer_GV, RXBUFFERSIZE);
+		  JG_ProcessCurrentCommand(CurrentCommand);
+		}
 
-  if(g_MeasurementsFlag == SET)
-  {
-	  JG_I2C_ReadMeasurementsFromP9025ACMem_Blocking();
-	  JG_I2C_PutMeasurementsValuesToGlobalVariablesFromRaw();
-	  g_MeasurementsFlag = RESET;
-  }
+		if(g_MeasurementsFlag == SET)
+		{
+		  JG_I2C_ReadMeasurementsFromP9025ACMem_Blocking();
+		  JG_I2C_PutMeasurementsValuesToGlobalVariablesFromRaw();
+		  JG_I2C_ReadMiscellaneousRegistersFromP9025ACMem_Blocking();
+		  JG_I2C_PutMiscellaneousValuesToGlobalVariablesFromRaw();
+		  JG_I2C_ReadWPCIDRegistersFromP9025ACMem_Blocking();
+		  JG_I2C_PutWPCIDValuesToGlobalVariablesFromRaw();
+
+		  g_MeasurementsFlag = RESET;
+		}
+
+		if(g_RepeatModeTimerTimedOutFlag && g_ExtendedRepeatModeFlag)
+		{
+			HAL_UART_Transmit(&huart2,"======== Measurements ========\n\r", sizeof("======== Measurements ========\n\r")-1,10);
+			HAL_UART_Transmit(&huart2,"------------------------------\n\r", sizeof("------------------------------\n\r")-1,10);
+			size_t size = sprintf(aTxBuffer_GV, "|     V_rect =  %3.2f V       |\r\n", g_P9025AC_Vrect_Volts);
+			HAL_UART_Transmit(&huart2,aTxBuffer_GV,size, 10);
+			size = sprintf(aTxBuffer_GV, "|     I_out  =  %4d mA      |\r\n", g_P9025AC_I_out_mA);
+			HAL_UART_Transmit(&huart2,aTxBuffer_GV,size, 10);
+			size = sprintf(aTxBuffer_GV, "|     f_clk  =   %3d kHz     |\r\n", g_P9025AC_f_clk_Hz);
+			HAL_UART_Transmit(&huart2,aTxBuffer_GV,size, 10);
+			HAL_UART_Transmit(&huart2,"------------------------------\n\r", sizeof("------------------------------\n\r")-1,10);
+			HAL_UART_Transmit(&huart2,"=========== Miscellaneous Information ===========\n\r", sizeof("=========== Miscellaneous Information ===========\n\r")-1,10);
+			HAL_UART_Transmit(&huart2,"-------------------------------------------------\n\r", sizeof("-------------------------------------------------\n\r")-1,10);
+			size = sprintf(aTxBuffer_GV, "| V_rect higher than UnderVoltageLockOut   | %d |\n\r", g_PA9025AC_VrectHigherThanUVLOThreshold);
+			HAL_UART_Transmit(&huart2,aTxBuffer_GV,size, 10);
+			size = sprintf(aTxBuffer_GV, "|     V_rect higher than CLAMP threshold   | %d |\n\r", g_PA9025AC_VrectHigherThanACClampThreshold);
+			HAL_UART_Transmit(&huart2,aTxBuffer_GV,size, 10);
+			size = sprintf(aTxBuffer_GV, "|             LDO Current Limit Exceeded   | %d |\n\r", g_PA9025AC_LDOCurrentLimitExceeded);
+			HAL_UART_Transmit(&huart2,aTxBuffer_GV,size, 10);
+			size = sprintf(aTxBuffer_GV, "|                        CHARGE_COMPLETE   | %d |\n\r", g_PA9025AC_ChargeComplete);
+			HAL_UART_Transmit(&huart2,aTxBuffer_GV,size, 10);
+			size = sprintf(aTxBuffer_GV, "|             Die temperature over 150*C   | %d |\n\r", g_PA9025AC_DieTemperatureOver150Celsius);
+			HAL_UART_Transmit(&huart2,aTxBuffer_GV,size, 10);
+			HAL_UART_Transmit(&huart2,"-------------------------------------------------\n\r", sizeof("-------------------------------------------------\n\r")-1,10);
+			g_RepeatModeTimerTimedOutFlag = 0;
+		}
+		if(g_RepeatModeTimerTimedOutFlag && g_RepeatModeFlag)
+		{
+			size_t size = sprintf(aTxBuffer_GV, "%1.2f %d %d ", g_P9025AC_Vrect_Volts, g_P9025AC_I_out_mA, g_P9025AC_f_clk_Hz);
+			HAL_UART_Transmit(&huart2,aTxBuffer_GV,size, 10);
+			size = sprintf(aTxBuffer_GV, "%d %d %d %d %d\r\n", g_PA9025AC_VrectHigherThanUVLOThreshold, g_PA9025AC_VrectHigherThanACClampThreshold, g_PA9025AC_LDOCurrentLimitExceeded, g_PA9025AC_ChargeComplete, g_PA9025AC_DieTemperatureOver150Celsius);
+			HAL_UART_Transmit(&huart2,aTxBuffer_GV,size, 10);
+			g_RepeatModeTimerTimedOutFlag = 0;
+		}
 
   }
   /* USER CODE END 3 */
