@@ -46,12 +46,14 @@ void JG_ProcessCurrentCommand(uint8_t Command)
 		case JG_Command_RepeatModeEnableCommandCode:
 		{
 			HAL_UART_Transmit_DMA(&huart2,(uint8_t*)JG_Command_RepeatModeEnableCommandResponseBeginning,JG_Command_RepeatModeEnableCommandResponseBeginningLength);
+			g_ExtendedRepeatModeFlag = 0;
 			g_RepeatModeFlag = 1;
 			break;
 		}
 		case JG_Command_ExtendedRepeatModeEnableCommandCode:
 		{
 			HAL_UART_Transmit_DMA(&huart2,(uint8_t*)JG_Command_ExtendedRepeatModeEnableCommandResponseBeginning,JG_Command_ExtendedRepeatModeEnableCommandResponseBeginningLength);
+			g_RepeatModeFlag = 0;
 			g_ExtendedRepeatModeFlag = 1;
 			break;
 		}
